@@ -29,6 +29,8 @@ def main():
     if len(sys.argv) > 1:
         file_name = sys.argv[1]
         dlg.loadFromFile(file_name)
+    else:
+        dlg.restoreSession()
     dlg.exec()
 
     # Clear temporary files

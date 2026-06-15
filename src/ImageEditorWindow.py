@@ -2,7 +2,7 @@ from PySide6.QtCore import QSettings, QFileInfo, Qt, QStandardPaths, QDir
 from PySide6.QtGui import QIcon, QAction, QBrush, QColor, QImage
 from PySide6.QtWidgets import QApplication, QStyle, QMessageBox, QDialog, QFileDialog, QHBoxLayout, QGroupBox, QRadioButton
 
-from ImageEditor import ImageEditorDialog, SettingsDialog
+from ImageEditor import ImageEditorDialog, SettingsDialog, ZOOM_MIN, ZOOM_MAX
 from ImageProxy import ImageProxy
 from ImageScrollLabel import ImageScrollLabel
 from Tools.Gui import getSaveFileName, ColorButton
@@ -70,6 +70,8 @@ class ImageEditorWindow(ImageEditorDialog):
         self.scrollPanel.hide()
 
         self.saveImageConnected = False
+        self.origFileName = None
+        self._pendingZoom = None
 
     def createActions(self):
         super().createActions()
@@ -108,26 +110,39 @@ class ImageEditorWindow(ImageEditorDialog):
         folder = QFileDialog.getExistingDirectory(
             self, self.tr("Open image folder"), last_dir)
         if folder:
-            dir_ = QDir(folder)
-            filter_ = ('*.png', '*.jpg', '*.jpeg', '*.bmp',
-                       '*.tif', '*.tiff', '*.gif', '*.webp')
-            files = dir_.entryInfoList(filter_, QDir.Files, QDir.Name)
-            if len(files) > 0:
-                proxy = ImageProxy()
-                for file in files:
-                    image = ImageScrollLabel(field=file.filePath(), title=file.fileName())
-                    image.loadFromFile(file.filePath())
-                    image.imageEdited.connect(self.imageEdited)
-                    proxy.append(image)
-    
-                proxy.setCurrent(files[0].filePath())
-                self.setImageProxy(proxy)
-                self.scrollPanel.show()
-                self.navigationMenu.setEnabled(True)
+            self._loadFolder(folder)
 
-                if self.saveImageConnected:
-                    self.imageSaved.disconnect(self.saveImage)
-                    self.saveImageConnected = False
+    def openRecentFolder(self, path):
+        self._loadFolder(path)
+
+    def _loadFolder(self, folder, current=None):
+        dir_ = QDir(folder)
+        filter_ = ('*.png', '*.jpg', '*.jpeg', '*.bmp',
+                   '*.tif', '*.tiff', '*.gif', '*.webp')
+        files = dir_.entryInfoList(filter_, QDir.Files, QDir.Name)
+        if len(files) == 0:
+            return False
+
+        proxy = ImageProxy()
+        for file in files:
+            image = ImageScrollLabel(field=file.filePath(), title=file.fileName())
+            image.loadFromFile(file.filePath())
+            image.imageEdited.connect(self.imageEdited)
+            proxy.append(image)
+
+        proxy.setCurrent(current if current else files[0].filePath())
+        self.setImageProxy(proxy)
+        self.scrollPanel.show()
+        self.navigationMenu.setEnabled(True)
+
+        if self.saveImageConnected:
+            self.imageSaved.disconnect(self.saveImage)
+            self.saveImageConnected = False
+
+        settings = QSettings()
+        settings.setValue('images/last_dir', folder)
+        self.addRecentItem(folder, is_folder=True)
+        return True
 
     def loadFromFile(self, fileName):
         if self.isChanged:
@@ -146,6 +161,7 @@ class ImageEditorWindow(ImageEditorDialog):
         file_info = QFileInfo(fileName)
         settings = QSettings()
         settings.setValue('images/last_dir', file_info.absolutePath())
+        self.addRecentItem(fileName, is_folder=False)
 
         file_title = file_info.fileName()
         self.setTitle(file_title)
@@ -194,3 +210,56 @@ class ImageEditorWindow(ImageEditorDialog):
         inCrop = self.cropAct.isChecked()
         inRotate = self.rotateAct.isChecked()
         self.openFolderAct.setDisabled(inCrop or inRotate)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._pendingZoom is not None:
+            self.zoom(self._pendingZoom)
+            self._pendingZoom = None
+
+    def done(self, r):
+        self._saveSession()
+        super().done(r)
+
+    def _saveSession(self):
+        settings = QSettings()
+        settings.beginGroup('session')
+        in_folder = self.proxy is not None and self.scrollPanel.isVisible()
+        if in_folder:
+            current = self.proxy.currentImage()
+            folder = QFileInfo(current.field).absolutePath() if current else ''
+            settings.setValue('mode', 'folder')
+            settings.setValue('folder', folder)
+            settings.setValue('current_image', current.field if current else '')
+        elif self.hasImage() and self.origFileName:
+            settings.setValue('mode', 'file')
+            settings.setValue('file', self.origFileName)
+        else:
+            settings.setValue('mode', '')
+        settings.setValue('fit_to_window', self.isFitToWindow)
+        settings.setValue('scale', float(self.scale))
+        settings.endGroup()
+
+    def restoreSession(self):
+        settings = QSettings()
+        settings.beginGroup('session')
+        mode = settings.value('mode', '')
+        folder = settings.value('folder', '')
+        current_image = settings.value('current_image', '')
+        file_name = settings.value('file', '')
+        fit = settings.value('fit_to_window', True, type=bool)
+        scale = settings.value('scale', 1.0, type=float)
+        settings.endGroup()
+
+        restored = False
+        if mode == 'folder' and folder and QFileInfo(folder).isDir():
+            current = current_image \
+                if current_image and QFileInfo(current_image).isFile() else None
+            restored = self._loadFolder(folder, current)
+        elif mode == 'file' and file_name and QFileInfo(file_name).isFile():
+            self.loadFromFile(file_name)
+            restored = True
+
+        if restored and not fit:
+            scale = max(ZOOM_MIN / 100, min(scale, ZOOM_MAX / 100))
+            self._pendingZoom = int(round(scale * 100))

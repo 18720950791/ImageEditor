@@ -101,6 +101,8 @@ ZOOM_LIST = (600, 480, 385, 310, 250, 200, 158, 125,
 ZOOM_MAX = ZOOM_LIST[0]
 ZOOM_MIN = ZOOM_LIST[-1]
 MASK_OPACITY = 0.3
+RECENT_MAX = 10
+RECENT_KEY = 'image_viewer/recent_items'
 
 
 @storeDlgPositionDecorator
@@ -1229,6 +1231,7 @@ class ImageEditorDialog(QDialog):
         self.openAct = QAction(self.tr("Browse in viewer"), self, triggered=self.open)
         icon = style.standardIcon(QStyle.SP_DialogOpenButton)
         self.openFileAct = QAction(icon, self.tr("&Open..."), self, shortcut=QKeySequence.Open, triggered=self.openFile)
+        self.clearRecentAct = QAction(self.tr("Clear Recent"), self, triggered=self.clearRecentItems)
         self.saveAsAct = QAction(self.tr("&Save As..."), self, shortcut=QKeySequence.SaveAs, triggered=self.saveAs)
         # self.printAct = QAction(self.tr("&Print..."), self, shortcut=QKeySequence.Print, enabled=False, triggered=self.print_)
         self.exitAct = QAction(self.tr("E&xit"), self, shortcut=QKeySequence.Quit, triggered=self.close)
@@ -1290,6 +1293,8 @@ class ImageEditorDialog(QDialog):
         self.fileMenu = QMenu(self.tr("&File"), self)
         self.fileMenu.addAction(self.openAct)
         self.fileMenu.addAction(self.openFileAct)
+        self.recentMenu = self.fileMenu.addMenu(self.tr("Open Recent"))
+        self._rebuildRecentMenu()
         self.fileMenu.addAction(self.saveAct)
         self.fileMenu.addAction(self.saveAsAct)
         # self.fileMenu.addAction(self.printAct)
@@ -1556,6 +1561,87 @@ class ImageEditorDialog(QDialog):
             return True
 
         return False
+
+    def _loadRecentItems(self):
+        settings = QSettings()
+        raw = settings.value(RECENT_KEY, [])
+        if raw is None:
+            raw = []
+        elif isinstance(raw, str):
+            raw = [raw]
+        items = []
+        for entry in raw:
+            if not entry or '\t' not in entry:
+                continue
+            kind, path = entry.split('\t', 1)
+            items.append((path, kind == 'D'))
+        return items
+
+    def _saveRecentItems(self, items):
+        settings = QSettings()
+        raw = [('D' if is_folder else 'F') + '\t' + path
+               for path, is_folder in items]
+        settings.setValue(RECENT_KEY, raw)
+
+    def addRecentItem(self, path, is_folder=False):
+        if not path:
+            return
+        path = QDir.cleanPath(QFileInfo(path).absoluteFilePath())
+        key = os.path.normcase(path)
+        items = [it for it in self._loadRecentItems()
+                 if os.path.normcase(it[0]) != key]
+        items.insert(0, (path, is_folder))
+        del items[RECENT_MAX:]
+        self._saveRecentItems(items)
+        self._rebuildRecentMenu()
+
+    def _removeRecentItem(self, path):
+        key = os.path.normcase(path)
+        items = [it for it in self._loadRecentItems()
+                 if os.path.normcase(it[0]) != key]
+        self._saveRecentItems(items)
+        self._rebuildRecentMenu()
+
+    def _rebuildRecentMenu(self):
+        self.recentMenu.clear()
+        items = self._loadRecentItems()
+        if items:
+            for path, is_folder in items:
+                name = QFileInfo(path).fileName() or path
+                prefix = self.tr("[Folder] ") if is_folder else ""
+                act = self.recentMenu.addAction(prefix + name)
+                act.setToolTip(path)
+                act.triggered.connect(
+                    lambda checked=False, p=path, f=is_folder:
+                    self._openRecentItem(p, f))
+        else:
+            emptyAct = self.recentMenu.addAction(self.tr("(No recent items)"))
+            emptyAct.setEnabled(False)
+        self.recentMenu.addSeparator()
+        self.recentMenu.addAction(self.clearRecentAct)
+        self.clearRecentAct.setEnabled(bool(items))
+
+    def _openRecentItem(self, path, is_folder):
+        info = QFileInfo(path)
+        exists = info.isDir() if is_folder else info.isFile()
+        if not exists:
+            QMessageBox.warning(
+                self, self.tr("Open Recent"),
+                self.tr("The path is no longer available:\n%s") % path)
+            self._removeRecentItem(path)
+            return
+        if is_folder:
+            self.openRecentFolder(path)
+        else:
+            self.loadFromFile(path)
+
+    def openRecentFolder(self, path):
+        # Folder browsing is provided by subclasses (e.g. ImageEditorWindow).
+        pass
+
+    def clearRecentItems(self):
+        self._saveRecentItems([])
+        self._rebuildRecentMenu()
 
     def open(self):
         fileName = self._saveTmpImage()

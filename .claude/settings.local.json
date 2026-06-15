@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l D:/alicode/ali/repo-25/claude3/src/*.py)",
+      "Bash(python -c \"import PySide6; print\\(''''PYSIDE6_OK'''', PySide6.__version__\\)\")"
+    ]
+  }
+}
