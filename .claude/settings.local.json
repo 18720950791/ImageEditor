@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile src/Tools/misc.py)",
+      "Bash(python -m py_compile src/ImageEditorWindow.py)"
+    ]
+  }
+}

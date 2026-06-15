@@ -51,3 +51,19 @@ def saveImageFilters():
     filters.append(QApplication.translate("saveImageFilters", "All files (*.*)"))
 
     return filters
+
+
+def batchExportFormats():
+    """Return list of (display_name, extension) tuples for batch export."""
+    supported = QImageReader.supportedImageFormats()
+
+    formats = [
+        ("JPEG", ".jpg"),
+        ("PNG", ".png"),
+        ("BMP", ".bmp"),
+        ("TIFF", ".tif"),
+    ]
+    if b'webp' in supported:
+        formats.append(("WebP", ".webp"))
+
+    return formats
