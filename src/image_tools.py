@@ -165,3 +165,34 @@ def rembg(image, model_name, crop=False):
         if bbox:
             output = output.crop(bbox)
     return ImageQt.ImageQt(output)
+
+
+def adjust_image(image, brightness=1.0, contrast=1.0, saturation=1.0, sharpness=1.0):
+    from PIL import ImageEnhance, ImageQt
+
+    im = ImageQt.fromqimage(image)
+
+    # Keep the alpha channel aside so the per-band enhancement operations
+    # (which blend against a solid degenerate image) don't alter transparency.
+    alpha = None
+    if im.mode in ('RGBA', 'LA') or (im.mode == 'P' and 'transparency' in im.info):
+        im = im.convert('RGBA')
+        alpha = im.getchannel('A')
+        im = im.convert('RGB')
+    else:
+        im = im.convert('RGB')
+
+    if brightness != 1.0:
+        im = ImageEnhance.Brightness(im).enhance(brightness)
+    if contrast != 1.0:
+        im = ImageEnhance.Contrast(im).enhance(contrast)
+    if saturation != 1.0:
+        im = ImageEnhance.Color(im).enhance(saturation)
+    if sharpness != 1.0:
+        im = ImageEnhance.Sharpness(im).enhance(sharpness)
+
+    if alpha is not None:
+        im = im.convert('RGBA')
+        im.putalpha(alpha)
+
+    return ImageQt.ImageQt(im)

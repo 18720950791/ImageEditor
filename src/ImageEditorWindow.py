@@ -193,4 +193,5 @@ class ImageEditorWindow(ImageEditorDialog):
 
         inCrop = self.cropAct.isChecked()
         inRotate = self.rotateAct.isChecked()
-        self.openFolderAct.setDisabled(inCrop or inRotate)
+        inAdjust = self.adjustAct.isChecked()
+        self.openFolderAct.setDisabled(inCrop or inRotate or inAdjust)

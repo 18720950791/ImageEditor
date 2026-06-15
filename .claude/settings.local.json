@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import PySide6, PIL; from PIL import ImageEnhance, ImageQt; print\\(''''PySide6'''', PySide6.__version__\\); print\\(''''Pillow OK''''\\)\")",
+      "Bash(python -m py_compile ImageEditor.py ImageEditorWindow.py image_tools.py)"
+    ]
+  }
+}
