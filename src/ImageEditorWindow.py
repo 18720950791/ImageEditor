@@ -2,7 +2,7 @@ from PySide6.QtCore import QSettings, QFileInfo, Qt, QStandardPaths, QDir
 from PySide6.QtGui import QIcon, QAction, QBrush, QColor, QImage
 from PySide6.QtWidgets import QApplication, QStyle, QMessageBox, QDialog, QFileDialog, QHBoxLayout, QGroupBox, QRadioButton
 
-from ImageEditor import ImageEditorDialog, SettingsDialog
+from ImageEditor import ImageEditorDialog, SettingsDialog, ZOOM_MAX
 from ImageProxy import ImageProxy
 from ImageScrollLabel import ImageScrollLabel
 from Tools.Gui import getSaveFileName, ColorButton
@@ -70,6 +70,7 @@ class ImageEditorWindow(ImageEditorDialog):
         self.scrollPanel.hide()
 
         self.saveImageConnected = False
+        self._session_restored = False
 
     def createActions(self):
         super().createActions()
@@ -194,3 +195,51 @@ class ImageEditorWindow(ImageEditorDialog):
         inCrop = self.cropAct.isChecked()
         inRotate = self.rotateAct.isChecked()
         self.openFolderAct.setDisabled(inCrop or inRotate)
+
+    def closeEvent(self, event):
+        self.saveSession()
+        super().closeEvent(event)
+
+    def saveSession(self):
+        settings = QSettings()
+
+        # Save current image path
+        if hasattr(self, 'origFileName') and self.origFileName:
+            settings.setValue('session/current_image', self.origFileName)
+
+        # Save zoom level
+        settings.setValue('session/zoom', self.scale)
+
+        # Save fullscreen state
+        settings.setValue('session/fullscreen', self.isFullScreen)
+
+    def restoreSession(self):
+        if self._session_restored:
+            return
+        self._session_restored = True
+
+        settings = QSettings()
+
+        # Restore current image (independent fallback)
+        image_path = settings.value('session/current_image')
+        if image_path and QFileInfo(image_path).isFile():
+            self.loadFromFile(image_path)
+        else:
+            # Image path invalid — fall back independently
+            settings.remove('session/current_image')
+
+        # Restore zoom level (independent fallback)
+        zoom = settings.value('session/zoom')
+        if zoom is not None:
+            try:
+                zoom_val = float(zoom)
+                if self.minScale <= zoom_val <= ZOOM_MAX / 100:
+                    if zoom_val > self.minScale:
+                        self.isFitToWindow = False
+                    self.zoom(zoom_val * 100)
+            except (ValueError, TypeError):
+                pass  # Fall back to default fit-to-window
+
+        # Restore fullscreen (independent fallback)
+        if settings.value('session/fullscreen', False, type=bool):
+            self.fullScreen()
