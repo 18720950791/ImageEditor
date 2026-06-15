@@ -351,6 +351,111 @@ class RotateDialog(QDialog):
         return self.gridShown.isChecked()
 
 
+@storeDlgPositionDecorator
+class AdjustmentsDialog(QDialog):
+    valueChanged = pyqtSignal(dict)
+
+    PARAMS = (
+        ('brightness', "Brightness"),
+        ('contrast', "Contrast"),
+        ('saturation', "Saturation"),
+        ('sharpness', "Sharpness"),
+    )
+
+    def __init__(self, parent):
+        super().__init__(parent, Qt.WindowCloseButtonHint)
+        self.setWindowTitle(self.tr("Adjust"))
+
+        self._sliders = {}
+        self._spins = {}
+        self._updating = False
+
+        layout = QVBoxLayout()
+
+        for name, label_text in self.PARAMS:
+            row = QHBoxLayout()
+
+            label = QLabel(self.tr(label_text))
+            label.setMinimumWidth(80)
+
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(-100, 100)
+            slider.setValue(0)
+            slider.setMinimumWidth(180)
+            slider.setTickInterval(25)
+            slider.setTickPosition(QSlider.TicksBelow)
+
+            spin = QSpinBox()
+            spin.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            spin.setRange(-100, 100)
+            spin.setValue(0)
+            spin.setKeyboardTracking(False)
+            spin.setAccelerated(True)
+
+            resetBtn = QPushButton("↺")
+            resetBtn.setFixedWidth(28)
+            resetBtn.setToolTip(self.tr("Reset %s") % label_text)
+
+            # Bidirectional slider ↔ spin connection
+            slider.valueChanged.connect(spin.setValue)
+            spin.valueChanged.connect(slider.setValue)
+
+            # Emit combined signal on any change
+            slider.valueChanged.connect(self._emitValues)
+            resetBtn.clicked.connect(lambda checked=False, s=slider, sp=spin: self._resetOne(s, sp))
+
+            self._sliders[name] = slider
+            self._spins[name] = spin
+
+            row.addWidget(label)
+            row.addWidget(slider)
+            row.addWidget(spin)
+            row.addWidget(resetBtn)
+            layout.addLayout(row)
+
+        # Reset All button
+        resetAllBtn = QPushButton(self.tr("Reset All"))
+        resetAllBtn.clicked.connect(self._resetAll)
+
+        buttonBox = QDialogButtonBox(Qt.Horizontal)
+        buttonBox.addButton(QDialogButtonBox.Ok)
+        buttonBox.addButton(QDialogButtonBox.Cancel)
+        buttonBox.accepted.connect(self.accept)
+        buttonBox.rejected.connect(self.reject)
+
+        btnRow = QHBoxLayout()
+        btnRow.addWidget(resetAllBtn)
+        btnRow.addStretch()
+        btnRow.addWidget(buttonBox)
+        layout.addLayout(btnRow)
+
+        self.setLayout(layout)
+
+    def showEvent(self, _e):
+        self.setFixedSize(self.size())
+
+    def _resetOne(self, slider, spin):
+        self._updating = True
+        slider.setValue(0)
+        spin.setValue(0)
+        self._updating = False
+        self._emitValues()
+
+    def _resetAll(self):
+        self._updating = True
+        for name in self._sliders:
+            self._sliders[name].setValue(0)
+            self._spins[name].setValue(0)
+        self._updating = False
+        self._emitValues()
+
+    def _emitValues(self):
+        if self._updating:
+            return
+        values = {name: self._sliders[name].value() for name in self._sliders}
+        self.valueChanged.emit(values)
+
+
 class BoundingPointItem(QGraphicsRectItem):
     SIZE = 4
     TOP_LEFT = 0
@@ -1204,6 +1309,7 @@ class ImageEditorDialog(QDialog):
         self.isChanged = False
         self.cropDlg = None
         self.rotateDlg = None
+        self.adjustDlg = None
         self.grid = None
         self.bounding = None
         self.isFullScreen = False
@@ -1252,6 +1358,7 @@ class ImageEditorDialog(QDialog):
         self.rotateAct = QAction(self.tr("Rotate..."), self, shortcut=Qt.Key_R, checkable=True, triggered=self.rotate)
         self.cropAct = QAction(QIcon(':/shape_handles.png'), self.tr("Crop..."), self, shortcut=Qt.Key_C, checkable=True, triggered=self.crop)
         self.autocropAct = QAction(self.tr("Autocrop"), self, triggered=self.autocrop)
+        self.adjustAct = QAction(self.tr("Adjust..."), self, shortcut=Qt.Key_J, checkable=True, triggered=self.adjust)
         self.saveAct = QAction(QIcon(':/save.png'), self.tr("Save"), self, shortcut=QKeySequence.Save, triggered=self.save)
         self.saveAct.setDisabled(True)
         self.copyAct = QAction(QIcon(':/page_copy.png'), self.tr("Copy"), self, shortcut=QKeySequence.Copy, triggered=self.copy)
@@ -1312,6 +1419,7 @@ class ImageEditorDialog(QDialog):
         self.editMenu.addAction(self.rotateAct)
         self.editMenu.addAction(self.cropAct)
         self.editMenu.addAction(self.autocropAct)
+        self.editMenu.addAction(self.adjustAct)
         if HAS_REMBG:
             self.editMenu.addAction(self.rembgAct)
         self.editMenu.addSeparator()
@@ -1361,6 +1469,7 @@ class ImageEditorDialog(QDialog):
         self.toolBar.addAction(self.rotateLeftAct)
         self.toolBar.addAction(self.rotateRightAct)
         self.toolBar.addAction(self.cropAct)
+        self.toolBar.addAction(self.adjustAct)
         self.toolBar.addSeparator()
         if self.use_webcam:
             self.toolBar.addAction(self.cameraAct)
@@ -1447,7 +1556,8 @@ class ImageEditorDialog(QDialog):
     def imageScrollClicked(self, image):
         inCrop = self.cropAct.isChecked()
         inRotate = self.rotateAct.isChecked()
-        if inCrop or inRotate:
+        inAdjust = self.adjustAct.isChecked()
+        if inCrop or inRotate or inAdjust:
             return
 
         if not self.confirmClosingImage():
@@ -1586,6 +1696,9 @@ class ImageEditorDialog(QDialog):
             return
         if self.rotateDlg and self.rotateDlg.isVisible():
             self.rotateDlg.close()
+            return
+        if self.adjustDlg and self.adjustDlg.isVisible():
+            self.adjustDlg.close()
             return
 
         if self.isFullScreen:
@@ -1928,6 +2041,44 @@ class ImageEditorDialog(QDialog):
         self.rotateDlg.deleteLater()
         self.rotateDlg = None
 
+    def adjust(self):
+        if self.adjustAct.isChecked():
+            self.adjustDlg = AdjustmentsDialog(self)
+            self.adjustDlg.valueChanged.connect(self.adjustChanged)
+            self.adjustDlg.finished.connect(self.adjustClose)
+            self.adjustDlg.show()
+            self._startPixmap = self._pixmapHandle.pixmap()
+            self._updateEditActions()
+        else:
+            self.adjustDlg.close()
+
+    def adjustChanged(self, values):
+        image = self._startPixmap.toImage()
+        adjusted = adjustImage(
+            image,
+            brightness=values['brightness'],
+            contrast=values['contrast'],
+            saturation=values['saturation'],
+            sharpness=values['sharpness'],
+        )
+        self.setImage(adjusted)
+
+    def adjustClose(self, result):
+        if result:
+            self.isChanged = True
+            self.pushUndo(self._startPixmap)
+        else:
+            self.setImage(self._startPixmap)
+
+        self._startPixmap = None
+
+        self.markWindowTitle(self.isChanged)
+        self.adjustAct.setChecked(False)
+        self._updateEditActions()
+
+        self.adjustDlg.deleteLater()
+        self.adjustDlg = None
+
     def crop(self):
         if self.cropAct.isChecked():
             sceneRect = self.viewer.sceneRect()
@@ -2100,6 +2251,7 @@ class ImageEditorDialog(QDialog):
         self.rotateAct.setEnabled(enabled and not self.readonly)
         self.cropAct.setEnabled(enabled and not self.readonly)
         self.autocropAct.setEnabled(enabled and not self.readonly)
+        self.adjustAct.setEnabled(enabled and not self.readonly)
         if HAS_REMBG:
             self.rembgAct.setEnabled(enabled and not self.readonly)
         self.cutLeftAct.setEnabled(enabled and not self.readonly)
@@ -2110,28 +2262,31 @@ class ImageEditorDialog(QDialog):
     def _updateEditActions(self):
         inCrop = self.cropAct.isChecked()
         inRotate = self.rotateAct.isChecked()
-        self.openFileAct.setDisabled(inCrop or inRotate)
-        self.exitAct.setDisabled(inCrop or inRotate)
-        self.saveAsAct.setDisabled(inCrop or inRotate)
-        self.copyAct.setDisabled(inCrop or inRotate)
-        self.pasteAct.setDisabled(inCrop or inRotate)
-        self.rotateLeftAct.setDisabled(inCrop or inRotate)
-        self.rotateRightAct.setDisabled(inCrop or inRotate)
-        self.rotateAct.setDisabled(inCrop)
-        self.cropAct.setDisabled(inRotate)
-        self.autocropAct.setDisabled(inCrop or inRotate)
+        inAdjust = self.adjustAct.isChecked()
+        inModal = inCrop or inRotate or inAdjust
+        self.openFileAct.setDisabled(inModal)
+        self.exitAct.setDisabled(inModal)
+        self.saveAsAct.setDisabled(inModal)
+        self.copyAct.setDisabled(inModal)
+        self.pasteAct.setDisabled(inModal)
+        self.rotateLeftAct.setDisabled(inModal)
+        self.rotateRightAct.setDisabled(inModal)
+        self.rotateAct.setDisabled(inCrop or inAdjust)
+        self.cropAct.setDisabled(inRotate or inAdjust)
+        self.adjustAct.setDisabled(inCrop or inRotate)
+        self.autocropAct.setDisabled(inModal)
         if HAS_REMBG:
-            self.rembgAct.setDisabled(inCrop or inRotate)
-        self.cutLeftAct.setDisabled(inCrop or inRotate)
-        self.cutRightAct.setDisabled(inCrop or inRotate)
+            self.rembgAct.setDisabled(inModal)
+        self.cutLeftAct.setDisabled(inModal)
+        self.cutRightAct.setDisabled(inModal)
         if self.use_webcam:
-            self.cameraAct.setDisabled(inCrop or inRotate)
-        self.prevImageAct.setDisabled(inCrop or inRotate)
-        self.nextImageAct.setDisabled(inCrop or inRotate)
-        self.prevRecordAct.setDisabled(inCrop or inRotate)
-        self.nextRecordAct.setDisabled(inCrop or inRotate)
+            self.cameraAct.setDisabled(inModal)
+        self.prevImageAct.setDisabled(inModal)
+        self.nextImageAct.setDisabled(inModal)
+        self.prevRecordAct.setDisabled(inModal)
+        self.nextRecordAct.setDisabled(inModal)
 
-        if inCrop or inRotate:
+        if inModal:
             self.saveAct.setDisabled(True)
         else:
             self.saveAct.setEnabled(self.isChanged)

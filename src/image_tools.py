@@ -165,3 +165,47 @@ def rembg(image, model_name, crop=False):
         if bbox:
             output = output.crop(bbox)
     return ImageQt.ImageQt(output)
+
+
+def adjustImage(image, brightness=0, contrast=0, saturation=0, sharpness=0):
+    """Adjust image brightness, contrast, saturation, and sharpness.
+
+    All parameters range from -100 to +100, where 0 means no change.
+    Returns a QImage with the adjustments applied.
+    """
+    from PIL import Image, ImageEnhance, ImageQt
+
+    # All parameters are zero — return a copy without conversion overhead
+    if brightness == 0 and contrast == 0 and saturation == 0 and sharpness == 0:
+        return image.copy()
+
+    # Ensure a format that PIL.ImageQt.fromqimage can handle
+    fmt = image.format()
+    if fmt not in (QImage.Format.Format_RGB32,
+                   QImage.Format.Format_ARGB32,
+                   QImage.Format.Format_ARGB32_Premultiplied):
+        image = image.convertToFormat(QImage.Format.Format_ARGB32, Qt.AutoColor)
+
+    pil_img = ImageQt.fromqimage(image)
+
+    # ImageEnhance works on RGB; composite alpha onto white background
+    if pil_img.mode == 'RGBA':
+        bg = Image.new('RGBA', pil_img.size, (255, 255, 255, 255))
+        pil_img = Image.alpha_composite(bg, pil_img).convert('RGB')
+    elif pil_img.mode != 'RGB':
+        pil_img = pil_img.convert('RGB')
+
+    def _to_factor(value):
+        """Map -100..+100 → 0.0..2.0 (1.0 = identity)."""
+        return 1.0 + value / 100.0
+
+    if brightness != 0:
+        pil_img = ImageEnhance.Brightness(pil_img).enhance(_to_factor(brightness))
+    if contrast != 0:
+        pil_img = ImageEnhance.Contrast(pil_img).enhance(_to_factor(contrast))
+    if saturation != 0:
+        pil_img = ImageEnhance.Color(pil_img).enhance(_to_factor(saturation))
+    if sharpness != 0:
+        pil_img = ImageEnhance.Sharpness(pil_img).enhance(_to_factor(sharpness))
+
+    return ImageQt.ImageQt(pil_img)
