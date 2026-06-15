@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QCursor,
     QDesktopServices,
     QIcon,
+    QImageReader,
     QKeySequence,
     QPen,
     QPixmap,
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMenu,
     QMenuBar,
     QMessageBox,
@@ -1145,6 +1147,144 @@ class SettingsDialog(QDialog):
         self.accept()
 
 
+@storeDlgPositionDecorator
+class BatchExportDialog(QDialog):
+    QUALITY_FORMATS = ('jpg', 'jpeg', 'webp')
+
+    def __init__(self, parent=None, file_count=0):
+        super().__init__(parent,
+                         Qt.WindowCloseButtonHint | Qt.WindowSystemMenuHint)
+
+        self.setWindowTitle(self.tr("Batch export"))
+
+        settings = QSettings()
+
+        self.outputDirEdit = QLineEdit(self)
+        self.outputDirEdit.setReadOnly(True)
+        self.outputDirEdit.setMinimumWidth(320)
+        self.outputDirEdit.setText(settings.value('batch_export/output_dir', IMAGE_PATH))
+        browseButton = QPushButton(self.tr("Browse..."), self)
+        browseButton.clicked.connect(self.browseOutputDir)
+        dirLayout = QHBoxLayout()
+        dirLayout.addWidget(self.outputDirEdit)
+        dirLayout.addWidget(browseButton)
+
+        self.formatSelector = QComboBox(self)
+        for label, ext, fmt in self._supportedFormats():
+            self.formatSelector.addItem(label, (ext, fmt))
+        last_format = settings.value('batch_export/format', 'jpg')
+        for i in range(self.formatSelector.count()):
+            if self.formatSelector.itemData(i)[0] == last_format:
+                self.formatSelector.setCurrentIndex(i)
+                break
+        self.formatSelector.currentIndexChanged.connect(self.formatChanged)
+
+        self.maxWidthSpin = QSpinBox(self)
+        self.maxWidthSpin.setRange(0, 100000)
+        self.maxWidthSpin.setSuffix(" px")
+        self.maxWidthSpin.setSpecialValueText(self.tr("No limit"))
+        self.maxWidthSpin.setValue(settings.value('batch_export/max_width', 0, type=int))
+
+        self.maxHeightSpin = QSpinBox(self)
+        self.maxHeightSpin.setRange(0, 100000)
+        self.maxHeightSpin.setSuffix(" px")
+        self.maxHeightSpin.setSpecialValueText(self.tr("No limit"))
+        self.maxHeightSpin.setValue(settings.value('batch_export/max_height', 0, type=int))
+
+        self.qualitySpin = QSpinBox(self)
+        self.qualitySpin.setRange(1, 100)
+        self.qualitySpin.setValue(settings.value('batch_export/quality', 90, type=int))
+
+        formLayout = QFormLayout()
+        formLayout.addRow(self.tr("Output folder"), dirLayout)
+        formLayout.addRow(self.tr("Format"), self.formatSelector)
+        formLayout.addRow(self.tr("Max width"), self.maxWidthSpin)
+        formLayout.addRow(self.tr("Max height"), self.maxHeightSpin)
+        formLayout.addRow(self.tr("Quality"), self.qualitySpin)
+
+        countLabel = QLabel(self.tr("Images to export: %d") % file_count, self)
+
+        buttonBox = QDialogButtonBox(Qt.Horizontal)
+        buttonBox.addButton(QDialogButtonBox.Ok)
+        buttonBox.addButton(QDialogButtonBox.Cancel)
+        buttonBox.accepted.connect(self.onAccept)
+        buttonBox.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addLayout(formLayout)
+        layout.addWidget(countLabel)
+        layout.addWidget(buttonBox)
+        self.setLayout(layout)
+
+        self.formatChanged()
+
+    def _supportedFormats(self):
+        supported = QImageReader.supportedImageFormats()
+
+        formats = [
+            ("JPG - JPEG", "jpg", "jpg"),
+            ("PNG - Portable Network Graphics", "png", "png"),
+        ]
+        if b'webp' in supported:
+            formats.append(("WEBP - WebP", "webp", "webp"))
+        if b'jp2' in supported:
+            formats.append(("JP2 - JPEG 2000", "jp2", "jp2"))
+        if b'jxl' in supported:
+            formats.append(("JXL - JPEG XL", "jxl", "jxl"))
+        if b'avif' in supported:
+            formats.append(("AVIF - AVIF", "avif", "avif"))
+        formats.append(("BMP - Windows Bitmap", "bmp", "bmp"))
+        formats.append(("TIF - TIFF", "tif", "tiff"))
+
+        return formats
+
+    def browseOutputDir(self):
+        current = self.outputDirEdit.text() or IMAGE_PATH
+        folder = QFileDialog.getExistingDirectory(
+            self, self.tr("Select output folder"), current)
+        if folder:
+            self.outputDirEdit.setText(folder)
+
+    def formatChanged(self, _index=None):
+        self.qualitySpin.setEnabled(self.isQualityFormat())
+
+    def onAccept(self):
+        if not self.outputDirEdit.text():
+            QMessageBox.warning(self, self.tr("Batch export"),
+                                self.tr("Please choose an output folder."))
+            return
+
+        settings = QSettings()
+        settings.setValue('batch_export/output_dir', self.outputDir())
+        settings.setValue('batch_export/format', self.formatExt())
+        settings.setValue('batch_export/max_width', self.maxWidth())
+        settings.setValue('batch_export/max_height', self.maxHeight())
+        settings.setValue('batch_export/quality', self.quality())
+
+        self.accept()
+
+    def outputDir(self):
+        return self.outputDirEdit.text()
+
+    def formatExt(self):
+        return self.formatSelector.currentData()[0]
+
+    def formatName(self):
+        return self.formatSelector.currentData()[1]
+
+    def maxWidth(self):
+        return self.maxWidthSpin.value()
+
+    def maxHeight(self):
+        return self.maxHeightSpin.value()
+
+    def quality(self):
+        return self.qualitySpin.value()
+
+    def isQualityFormat(self):
+        return self.formatExt() in self.QUALITY_FORMATS
+
+
 @storeDlgSizeDecorator
 class ImageEditorDialog(QDialog):
     imageSaved = pyqtSignal(QImage)
@@ -1230,6 +1370,7 @@ class ImageEditorDialog(QDialog):
         icon = style.standardIcon(QStyle.SP_DialogOpenButton)
         self.openFileAct = QAction(icon, self.tr("&Open..."), self, shortcut=QKeySequence.Open, triggered=self.openFile)
         self.saveAsAct = QAction(self.tr("&Save As..."), self, shortcut=QKeySequence.SaveAs, triggered=self.saveAs)
+        self.batchExportAct = QAction(self.tr("Batch export folder..."), self, triggered=self.batchExport)
         # self.printAct = QAction(self.tr("&Print..."), self, shortcut=QKeySequence.Print, enabled=False, triggered=self.print_)
         self.exitAct = QAction(self.tr("E&xit"), self, shortcut=QKeySequence.Quit, triggered=self.close)
         self.fullScreenAct = QAction(self.tr("Full Screen"), self, shortcut=QKeySequence.FullScreen, triggered=self.fullScreen)
@@ -1292,6 +1433,7 @@ class ImageEditorDialog(QDialog):
         self.fileMenu.addAction(self.openFileAct)
         self.fileMenu.addAction(self.saveAct)
         self.fileMenu.addAction(self.saveAsAct)
+        self.fileMenu.addAction(self.batchExportAct)
         # self.fileMenu.addAction(self.printAct)
         self.fileMenu.addSeparator()
         self.fileMenu.addAction(self.settingsAct)
@@ -2083,12 +2225,138 @@ class ImageEditorDialog(QDialog):
         self.markWindowTitle(self.isChanged)
         self._updateEditActions()
 
+    def _folderSourceFiles(self):
+        if not self.proxy:
+            return []
+
+        files = []
+        seen = set()
+        for image in self.proxy.images():
+            path = image.field
+            if not path:
+                continue
+            info = QFileInfo(path)
+            if not info.isFile():
+                continue
+            abs_path = info.absoluteFilePath()
+            key = os.path.normcase(abs_path)
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append(abs_path)
+
+        return files
+
+    def _hasFolderImages(self):
+        return bool(self._folderSourceFiles())
+
+    @staticmethod
+    def _uniqueTargetPath(out_dir, base, ext, source_norms):
+        candidate = os.path.join(out_dir, f"{base}.{ext}")
+        index = 0
+        while (os.path.normcase(os.path.abspath(candidate)) in source_norms
+               or os.path.exists(candidate)):
+            index += 1
+            candidate = os.path.join(out_dir, f"{base}_{index}.{ext}")
+
+        return candidate
+
+    def batchExport(self):
+        files = self._folderSourceFiles()
+        if not files:
+            QMessageBox.information(
+                self, self.tr("Batch export"),
+                self.tr("Open a folder of images first."))
+            return
+
+        dlg = BatchExportDialog(self, len(files))
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        out_dir = dlg.outputDir()
+        ext = dlg.formatExt()
+        fmt = dlg.formatName()
+        max_w = dlg.maxWidth()
+        max_h = dlg.maxHeight()
+        quality = dlg.quality() if dlg.isQualityFormat() else -1
+
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except OSError as e:
+            QMessageBox.critical(
+                self, self.tr("Batch export"),
+                self.tr("Cannot create output folder:\n%s") % str(e))
+            return
+
+        source_norms = {os.path.normcase(os.path.abspath(f)) for f in files}
+
+        progressDlg = QProgressDialog(
+            self.tr("Exporting images..."), self.tr("Cancel"),
+            0, len(files), self)
+        progressDlg.setWindowModality(Qt.WindowModal)
+        progressDlg.setWindowTitle(self.tr("Batch export"))
+        progressDlg.setMinimumDuration(0)
+
+        succeeded = 0
+        failed = []
+        canceled = False
+        for i, path in enumerate(files):
+            progressDlg.setValue(i)
+            if progressDlg.wasCanceled():
+                canceled = True
+                break
+
+            name = QFileInfo(path).fileName()
+            try:
+                image = QImage(path)
+                if image.isNull():
+                    failed.append((name, self.tr("cannot read image")))
+                    continue
+
+                w = max_w if max_w > 0 else image.width()
+                h = max_h if max_h > 0 else image.height()
+                if image.width() > w or image.height() > h:
+                    image = image.scaled(w, h, Qt.KeepAspectRatio,
+                                         Qt.SmoothTransformation)
+
+                base = QFileInfo(path).completeBaseName()
+                target = self._uniqueTargetPath(out_dir, base, ext, source_norms)
+
+                if image.save(target, fmt, quality):
+                    succeeded += 1
+                else:
+                    failed.append((name, self.tr("cannot save image")))
+            except Exception as e:
+                failed.append((name, str(e)))
+
+        progressDlg.setValue(len(files))
+
+        self._showBatchSummary(succeeded, failed, canceled)
+
+    def _showBatchSummary(self, succeeded, failed, canceled):
+        lines = []
+        if canceled:
+            lines.append(self.tr("Export canceled."))
+        lines.append(self.tr("Exported: %d") % succeeded)
+        lines.append(self.tr("Failed: %d") % len(failed))
+        if failed:
+            shown = failed[:15]
+            details = "\n".join(f"  {n}: {r}" for n, r in shown)
+            if len(failed) > len(shown):
+                details += "\n  " + self.tr("...and %d more") % (len(failed) - len(shown))
+            lines.append("")
+            lines.append(self.tr("Failed files:"))
+            lines.append(details)
+
+        QMessageBox.information(self, self.tr("Batch export"), "\n".join(lines))
+
     def _updateActions(self):
         enabled = self.hasImage()
 
         self.zoomSpin.setEnabled(enabled)
         self.openAct.setEnabled(enabled)
         self.saveAsAct.setEnabled(enabled)
+        self.batchExportAct.setEnabled(self._hasFolderImages())
         self.zoomInAct.setEnabled(enabled)
         self.zoomOutAct.setEnabled(enabled)
         self.normalSizeAct.setEnabled(enabled)
@@ -2113,6 +2381,7 @@ class ImageEditorDialog(QDialog):
         self.openFileAct.setDisabled(inCrop or inRotate)
         self.exitAct.setDisabled(inCrop or inRotate)
         self.saveAsAct.setDisabled(inCrop or inRotate)
+        self.batchExportAct.setDisabled(inCrop or inRotate or not self._hasFolderImages())
         self.copyAct.setDisabled(inCrop or inRotate)
         self.pasteAct.setDisabled(inCrop or inRotate)
         self.rotateLeftAct.setDisabled(inCrop or inRotate)
